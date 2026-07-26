@@ -509,6 +509,7 @@ func syncResource(ctx context.Context, c interface {
 
 	cursor := existingCursor
 	pageSize := determinePaginationDefaults()
+	pageSize.limit = clampSyncPageSize(resource, pageSize.limit)
 
 	var progressCount int64
 	pagesFetched := 0
@@ -795,6 +796,35 @@ func determinePaginationDefaults() paginationDefaults {
 		limitParam:  "limit",
 		limit:       100,
 	}
+}
+
+// substackMaxPageSize is the largest limit Substack's list endpoints accept.
+// Anything above it is rejected with HTTP 400
+// {"errors":[{"location":"query","param":"limit","msg":"Invalid value"}]},
+// which fails the whole resource rather than just the page. The spec the
+// generator reads does not describe this cap, so the derived page size sits
+// above it. The cap is server-side and re-measurable: a reprint must probe it
+// again rather than trust the page size the spec implies.
+const substackMaxPageSize = 50
+
+// clampSyncPageSize lowers a generated page size to what the resource's
+// endpoint accepts, leaving an already-smaller size alone.
+// /post_management/published caps lower than the rest, at
+// publishedPostsPageSize.
+//
+// Callers apply this to paginationDefaults.limit, which drives the request
+// limit, the short-page stop check, and the offset stride together, so
+// clamping the one value keeps those three in agreement. Lowering only the
+// request limit would leave the stride skipping unread records.
+func clampSyncPageSize(resource string, generatedLimit int) int {
+	maxPageSize := substackMaxPageSize
+	if resource == "posts-published" {
+		maxPageSize = publishedPostsPageSize
+	}
+	if generatedLimit < maxPageSize {
+		return generatedLimit
+	}
+	return maxPageSize
 }
 
 func resourceSupportsPagination(resource string) bool {
