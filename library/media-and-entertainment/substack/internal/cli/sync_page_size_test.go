@@ -150,3 +150,75 @@ func TestPublishedRejectsTheSharedPageSize(t *testing.T) {
 		t.Fatalf("clamped posts-published page size was rejected: %v", err)
 	}
 }
+
+func TestReconcileSyncPageSizeAfterUserOverrides(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		resource   string
+		userParams *syncUserParams
+		want       int
+	}{
+		{
+			name:       "--param smaller than cap",
+			resource:   "posts",
+			userParams: &syncUserParams{flatGlobal: map[string]string{"limit": "12"}},
+			want:       12,
+		},
+		{
+			name:       "--global-param above cap",
+			resource:   "posts",
+			userParams: &syncUserParams{trueGlobal: map[string]string{"limit": "1000"}},
+			want:       substackMaxPageSize,
+		},
+		{
+			name:     "--resource-param uses published cap",
+			resource: "posts-published",
+			userParams: &syncUserParams{perResource: map[string]map[string]string{
+				"posts-published": {"limit": "1000"},
+			}},
+			want: publishedPostsPageSize,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			pageSize := determinePaginationDefaults()
+			params := map[string]string{
+				pageSize.limitParam: strconv.Itoa(pageSize.limit),
+			}
+			tt.userParams.applyTo(tt.resource, params, false)
+
+			if err := reconcileSyncPageSize(tt.resource, &pageSize, params); err != nil {
+				t.Fatalf("reconcileSyncPageSize() error = %v", err)
+			}
+			if pageSize.limit != tt.want {
+				t.Errorf("paginator limit = %d, want %d", pageSize.limit, tt.want)
+			}
+			if got := params[pageSize.limitParam]; got != strconv.Itoa(tt.want) {
+				t.Errorf("request limit = %q, want %q", got, strconv.Itoa(tt.want))
+			}
+		})
+	}
+}
+
+func TestReconcileSyncPageSizeRejectsInvalidOverride(t *testing.T) {
+	t.Parallel()
+
+	for _, limit := range []string{"", "0", "-1", "not-a-number"} {
+		limit := limit
+		t.Run("limit="+limit, func(t *testing.T) {
+			t.Parallel()
+
+			pageSize := determinePaginationDefaults()
+			params := map[string]string{pageSize.limitParam: limit}
+			if err := reconcileSyncPageSize("posts", &pageSize, params); err == nil {
+				t.Fatalf("reconcileSyncPageSize() accepted invalid limit %q", limit)
+			}
+		})
+	}
+}
