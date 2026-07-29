@@ -4,12 +4,12 @@
   "applied_at": "2026-07-26",
   "base_run_id": "20260531-014452",
   "base_printing_press_version": "4.19.0",
-  "summary": "Substack validates the list-endpoint limit server-side and fails the whole resource when it is exceeded, so the generic sync page size has to be clamped per resource rather than taken from the spec. The caps are not uniform across endpoints and are re-measurable, so a reprint must probe them again rather than restore a single spec-derived page size.",
-  "reason": "The page size the generator derives sits above what Substack accepts: any limit past the cap returns HTTP 400 {\"errors\":[{\"location\":\"query\",\"param\":\"limit\",\"value\":N,\"msg\":\"Invalid value\"}]}, which fails drafts, posts, and posts-published outright instead of degrading the page. /post_management/published caps lower than the other list endpoints, so one shared value is not enough and the clamp is keyed by resource. The clamp is applied to paginationDefaults.limit at its single point of use because that one value drives the request limit, the short-page stop check, and the offset stride together; lowering only the request limit would leave the stride skipping past unread records.",
+  "summary": "Substack validates list-endpoint limits server-side, so sync must reconcile the final effective page size after user overrides and clamp it per resource. The request limit, short-page check, and offset stride must always share that value.",
+  "reason": "The generated page size exceeds Substack's accepted cap, and --param, --global-param, or --resource-param can replace the request limit after defaults are installed. If that final value is not parsed and clamped, large overrides restore the HTTP 400 while smaller overrides diverge from the paginator's stop check and offset stride. Reconcile after all user parameters are applied, clamp per resource, and write the same effective limit back to both request params and paginator state.",
   "files": [
     "internal/cli/sync.go",
     "internal/cli/sync_page_size_test.go"
   ],
-  "validated_outcome": "Measured live against www.thefp.com and astralcodexten.substack.com: /api/v1/archive returns 200 at limit=50 and HTTP 400 at limit=51+. End-to-end against astralcodexten, the pre-fix binary failed the posts resource with sync_error status 400 and total_records 0; the patched binary synced the resource successfully. Note for a future reprint: these resources still fetch only their first page, because extractPageItems reports hasMore=false for the bare JSON arrays these endpoints return — a separate defect from this limit cap, tracked upstream.",
+  "validated_outcome": "Tests cover the generated default, per-resource endpoint caps, smaller limits, all three user override paths, rejection of non-positive or non-numeric values, and agreement between the outgoing request limit and paginator state. Live measurements remain: /api/v1/archive accepts limit=50 and rejects limit=51+.",
   "upstream_issue": "https://github.com/mvanhorn/printing-press-library/issues/1524"
 }
